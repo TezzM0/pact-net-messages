@@ -19,7 +19,7 @@ namespace PactNetMessages
 
         IPactVerifier HonoursPactWith(string consumerName);
 
-        IPactVerifier PactUri(string uri);
+        IPactVerifier PactUri(string uri, PactUriOptions options = null);
 
         void Verify(string description = null, string providerState = null);
     }

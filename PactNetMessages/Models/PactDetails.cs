@@ -20,5 +20,23 @@ namespace PactNetMessages.Models
                     Provider != null ? Provider.Name : String.Empty)
                 .ToLowerSnakeCase();
         }
+
+        [JsonProperty(PropertyName = "_links")]
+        public Links Links { get; set; }
+    }
+
+    public class Links
+    {
+        [JsonProperty(PropertyName = "pb:publish-verification-results")]
+        public Link PublishVerificationResults { get; set; }
+    }
+
+    public class Link
+    {
+        [JsonProperty(PropertyName = "title")]
+        public string Title { get; set; }
+
+        [JsonProperty(PropertyName = "href")]
+        public string Href { get; set; }
     }
 }

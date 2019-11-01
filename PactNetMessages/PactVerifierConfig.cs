@@ -12,6 +12,10 @@ namespace PactNetMessages
 
         public IList<IReportOutputter> ReportOutputters { get; }
 
+        public bool PublishVerificationResults { get; set; }
+
+        public string ProviderVersion { get; set; }
+
         public PactVerifierConfig()
         {
             LogDir = Constants.DefaultLogDir;

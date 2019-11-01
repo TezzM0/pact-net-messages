@@ -1,6 +1,9 @@
 ﻿using System;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Threading.Tasks;
 using Newtonsoft.Json;
 using PactNetMessages.Extensions;
 using PactNetMessages.Logging;
@@ -12,13 +15,15 @@ using PactNetMessages.Reporters;
 
 namespace PactNetMessages
 {
-    public class PactVerifier : IPactVerifier
+    public class PactVerifier : IPactVerifier, IDisposable
     {
-        private readonly PactVerifierConfig pactVerifierConfig;
+        private readonly PactVerifierConfig _pactVerifierConfig;
+        private readonly HttpClient _httpClient;
 
         public string ConsumerName { get; private set; }
 
         public string PactFileUri { get; private set; }
+        public PactUriOptions PactUriOptions { get; private set; }
 
         public string ProviderName { get; private set; }
 
@@ -34,8 +39,9 @@ namespace PactNetMessages
         /// <param name="config"></param>
         public PactVerifier(Action setUp, Action tearDown, PactVerifierConfig config = null)
         {
-            pactVerifierConfig = config ?? new PactVerifierConfig();
+            _pactVerifierConfig = config ?? new PactVerifierConfig();
             ProviderStates = new ProviderStates(setUp, tearDown);
+            _httpClient = new HttpClient();
         }
 
         /// <summary>
@@ -94,14 +100,15 @@ namespace PactNetMessages
             return this;
         }
 
-        public IPactVerifier PactUri(string uri)
+        public IPactVerifier PactUri(string fileUri, PactUriOptions options = null)
         {
-            if (String.IsNullOrEmpty(uri))
+            if (string.IsNullOrEmpty(fileUri))
             {
-                throw new ArgumentException("Please supply a non null or empty consumerName");
+                throw new ArgumentException("Please supply a non null or empty fileUri");
             }
 
-            PactFileUri = uri;
+            PactFileUri = fileUri;
+            PactUriOptions = options;
 
             return this;
         }
@@ -121,12 +128,12 @@ namespace PactNetMessages
 
                 if (IsWebUri(PactFileUri))
                 {
-                    //Pact broker does not handle v3 specs for messages at this time
-                    throw new NotImplementedException(
-                        "Pact broker does not handle v3 specs for messages at this time.  Use a local pact file uri.");
+                    pactFileJson = HttpGetPactFile();
                 }
-
-                pactFileJson = File.ReadAllText(PactFileUri);
+                else
+                {
+                    pactFileJson = File.ReadAllText(PactFileUri);
+                }
 
                 pactFile = JsonConvert.DeserializeObject<MessagePactFile>(pactFileJson);
             }
@@ -154,18 +161,52 @@ namespace PactNetMessages
                     "The specified description and/or providerState filter yielded no interactions.");
             }
 
-            var loggerName = LogProvider.CurrentLogProvider.AddLogger(pactVerifierConfig.LogDir,
+            var loggerName = LogProvider.CurrentLogProvider.AddLogger(_pactVerifierConfig.LogDir,
                 ProviderName.ToLowerSnakeCase(), "{0}_verifier.log");
-            pactVerifierConfig.LoggerName = loggerName;
+            _pactVerifierConfig.LoggerName = loggerName;
+
+            var verificationResult = new PactVerificationResult
+            {
+                ProviderApplicationVersion = _pactVerifierConfig.ProviderVersion
+            };
 
             try
             {
-                var validator = new MessageProviderValidator(new Reporter(pactVerifierConfig), pactVerifierConfig);
+                var validator = new MessageProviderValidator(new Reporter(_pactVerifierConfig), _pactVerifierConfig);
                 validator.Validate(pactFile, ProviderStates);
+
+                verificationResult.Success = true;
             }
             finally
             {
-                LogProvider.CurrentLogProvider.RemoveLogger(pactVerifierConfig.LoggerName);
+                LogProvider.CurrentLogProvider.RemoveLogger(_pactVerifierConfig.LoggerName);
+            }
+
+            if (_pactVerifierConfig.PublishVerificationResults)
+            {
+                HttpPostPublishVerificationResults(
+                    pactFile.Links.PublishVerificationResults.Href, verificationResult);
+            }
+        }
+
+        private void HttpPostPublishVerificationResults(string uri, PactVerificationResult verificationResult)
+        {
+            ApplyAuthorizationHeadersIfRequired();
+            _httpClient.PostAsync(uri, new StringContent(JsonConvert.SerializeObject(verificationResult))).GetAwaiter().GetResult();
+        }
+
+        private string HttpGetPactFile()
+        {
+            ApplyAuthorizationHeadersIfRequired();
+            return _httpClient.GetStringAsync(PactFileUri).GetAwaiter().GetResult();
+        }
+
+        private void ApplyAuthorizationHeadersIfRequired()
+        {
+            if (PactUriOptions != null)
+            {
+                _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue(
+                    PactUriOptions.AuthorizationScheme, PactUriOptions.AuthorizationValue);
             }
         }
 
@@ -173,6 +214,11 @@ namespace PactNetMessages
         {
             return uri.StartsWith("http://", StringComparison.InvariantCultureIgnoreCase) ||
                 uri.StartsWith("https://", StringComparison.InvariantCultureIgnoreCase);
+        }
+
+        public void Dispose()
+        {
+            _httpClient?.Dispose();
         }
     }
 }
