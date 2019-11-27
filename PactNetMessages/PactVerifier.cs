@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Text;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
 using PactNetMessages.Extensions;
@@ -179,20 +180,30 @@ namespace PactNetMessages
             }
             finally
             {
-                LogProvider.CurrentLogProvider.RemoveLogger(_pactVerifierConfig.LoggerName);
-            }
+                if (_pactVerifierConfig.PublishVerificationResults)
+                {
+                    HttpPostPublishVerificationResults(
+                        pactFile.Links.PublishVerificationResults.Href, verificationResult);
+                }
 
-            if (_pactVerifierConfig.PublishVerificationResults)
-            {
-                HttpPostPublishVerificationResults(
-                    pactFile.Links.PublishVerificationResults.Href, verificationResult);
+                LogProvider.CurrentLogProvider.RemoveLogger(_pactVerifierConfig.LoggerName);
             }
         }
 
         private void HttpPostPublishVerificationResults(string uri, PactVerificationResult verificationResult)
         {
             ApplyAuthorizationHeadersIfRequired();
-            _httpClient.PostAsync(uri, new StringContent(JsonConvert.SerializeObject(verificationResult))).GetAwaiter().GetResult();
+            var verificationResultJson = JsonConvert.SerializeObject(verificationResult);
+            using (var content = new StringContent(verificationResultJson, Encoding.UTF8, "application/json"))
+            {
+                var response = _httpClient.PostAsync(uri, content).GetAwaiter().GetResult();
+                if (!response.IsSuccessStatusCode)
+                {
+                    throw new InvalidOperationException(string.Format(
+                        "Unable to publish results - {0} (status code: {1})", response.ReasonPhrase,
+                        (int) response.StatusCode));
+                }
+            }
         }
 
         private string HttpGetPactFile()
